@@ -1,0 +1,7 @@
+[package]
+name = "icbm_firmware"
+version = "0.1.0"
+edition = "2021"
+authors = ["Viraj Chhajed <viraj@generalcybernetics.org>"]
+
+[dependencies]
