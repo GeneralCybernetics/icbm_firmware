@@ -16,6 +16,10 @@ bind_interrupts!(struct Irqs {
     I2C2_ER => i2c::ErrorInterruptHandler<peripherals::I2C2>;
 });
 
+// Default I2C Address
+const SLF3X_I2C1_ADDRESS: u8 = 0x08;
+const SLF3X_I2C2_ADDRESS: u8 = 0x0F;
+
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
     info!("Hello world!");
@@ -41,40 +45,49 @@ async fn main(_spawner: Spawner) {
 
     let mut flow_sensor = SLF3S::new(i2c);
 
+    // match flow_sensor.start_measurement().await {
+    //     Ok(()) => info!("start_measurement command sent successfully"),
+    //     Err(e) => error!("Error sending start_measurement command: {:?}", e),
+    // };
+
+    // let start_time = Instant::now();
+    // let sample_duration = Duration::from_secs(1);
+    // let sample_interval = Duration::from_millis(20); // 50 Hz = 20 ms interval
+
+    // loop {
+    //     let loop_start = Instant::now();
+
+    //     match flow_sensor.read_sample().await {
+    //         Ok((a, b)) => info!("{}, {}", a, b),
+    //         Err(e) => error!("Error reading sample: {:?}", e),
+    //     }
+
+    //     if Instant::now() - start_time >= sample_duration {
+    //         break;
+    //     }
+
+    //     let elapsed = Instant::now() - loop_start;
+    //     if elapsed < sample_interval {
+    //         Timer::after(sample_interval - elapsed).await;
+    //     }
+    // }
+
+    // match flow_sensor.stop_measurement().await {
+    //     Ok(()) => info!("stop_measurement command sent successfully"),
+    //     Err(e) => error!("Error stop_measurement first command: {:?}", e),
+    // };
+
+    info!("{}", flow_sensor.rtrn_addr());
+
+    match flow_sensor.change_addr(0x000F, p.PA7).await {
+        Ok(()) => info!("change_addr command sent successfully"),
+        Err(e) => error!("Error sending change_addr command: {:?}", e),
+    }
+
     match flow_sensor.start_measurement().await {
         Ok(()) => info!("start_measurement command sent successfully"),
         Err(e) => error!("Error sending start_measurement command: {:?}", e),
-    };
-
-    let start_time = Instant::now();
-    let sample_duration = Duration::from_secs(1);
-    let sample_interval = Duration::from_millis(20); // 50 Hz = 20 ms interval
-
-    loop {
-        let loop_start = Instant::now();
-
-        match flow_sensor.read_sample().await {
-            Ok((a, b)) => info!("{}, {}", a, b),
-            Err(e) => error!("Error reading sample: {:?}", e),
-        }
-
-        if Instant::now() - start_time >= sample_duration {
-            break;
-        }
-
-        let elapsed = Instant::now() - loop_start;
-        if elapsed < sample_interval {
-            Timer::after(sample_interval - elapsed).await;
-        }
     }
 
-    match flow_sensor.stop_measurement().await {
-        Ok(()) => info!("stop_measurement command sent successfully"),
-        Err(e) => error!("Error stop_measurement first command: {:?}", e),
-    };
-
-    match flow_sensor.reset().await {
-        Ok(()) => info!("reset command sent successfully"),
-        Err(e) => error!("Error sending reset command: {:?}", e),
-    };
+    info!("{}", flow_sensor.rtrn_addr());
 }

@@ -1,5 +1,7 @@
+use embassy_stm32::gpio::{Level, Output, Pin, Speed};
 use embassy_stm32::i2c::I2c;
 use embassy_stm32::mode::Async;
+use embassy_stm32::Peripheral;
 use embassy_time::Timer;
 
 // Constants for scale factors
@@ -23,6 +25,10 @@ const SOFT_RESET_I2C_ADDRESS: u8 = 0x00;
 const CMD_SOFT_RESET_LENGTH: usize = 1;
 const CMD_SOFT_RESET: [u8; CMD_SOFT_RESET_LENGTH] = [0x06];
 const CHIP_RESET_DELAY: u64 = 50; // Milliseconds
+
+//Address Change Command
+const CMD_ADDR_CHANGE_LENGHT: usize = 2;
+const CMD_ADDR_CHANGE: [u8; CMD_ADDR_CHANGE_LENGHT] = [0x36, 0x61];
 
 pub struct SLF3S<'d> {
     i2c: I2c<'d, Async>,
@@ -81,5 +87,62 @@ impl<'d> SLF3S<'d> {
             .map_err(|_| "Failed to reset")?;
         Timer::after_millis(CHIP_RESET_DELAY.into()).await;
         Ok(())
+    }
+
+    pub async fn change_addr<P: Pin>(
+        &mut self,
+        new_addr: u16,
+        pin: impl Peripheral<P = P> + 'd,
+    ) -> Result<(), &'static str> {
+        let mut gpio_pin = Output::new(pin, Level::Low, Speed::Low);
+
+        self.reset().await?;
+
+        let mut command = [0u8; 5];
+        command[0..2].copy_from_slice(&CMD_ADDR_CHANGE);
+        command[2..4].copy_from_slice(&new_addr.to_be_bytes());
+        command[4] = Self::crc8(&command[2..4]); // Calculate CRC for the new address bytes
+
+        // Send the command to change the address
+        self.i2c
+            .write(self.i2c_address, &command)
+            .await
+            .map_err(|_| "Failed to send address change command")?;
+
+        Timer::after_micros(100).await;
+
+        gpio_pin.set_high();
+        Timer::after_micros(300).await;
+        gpio_pin.set_low();
+
+        // Wait for the 1.5ms monitoring process to complete
+        Timer::after_millis(2).await;
+
+        // The device should now respond to the new address
+        self.i2c_address = (new_addr & 0xFF) as u8;
+
+        // Wait for the confirmation pulse (200us high)
+        Timer::after_micros(200).await;
+
+        Ok(())
+    }
+
+    pub fn rtrn_addr(&mut self) -> u8 {
+        self.i2c_address
+    }
+
+    fn crc8(data: &[u8]) -> u8 {
+        let mut crc: u8 = 0xFF; // Initialization value
+        for &byte in data {
+            crc ^= byte;
+            for _ in 0..8 {
+                if crc & 0x80 != 0 {
+                    crc = (crc << 1) ^ 0x31; // 0x31 is the polynomial
+                } else {
+                    crc <<= 1;
+                }
+            }
+        }
+        crc // No final XOR needed as it's 0x00
     }
 }
