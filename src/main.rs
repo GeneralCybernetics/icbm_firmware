@@ -3,91 +3,58 @@
 
 use defmt::*;
 use embassy_executor::Spawner;
-use embassy_stm32::i2c::{Config, I2c};
-use embassy_stm32::time::Hertz;
-use embassy_stm32::{bind_interrupts, i2c, peripherals};
-use embassy_time::{Duration, Instant, Timer};
+use embassy_stm32::usart::{Config, DataBits, Parity, StopBits, Uart};
+use embassy_stm32::{bind_interrupts, peripherals, usart};
 use {defmt_rtt as _, panic_probe as _};
-mod drivers;
-use drivers::slf3s::SLF3S;
 
 bind_interrupts!(struct Irqs {
-    I2C2_EV => i2c::EventInterruptHandler<peripherals::I2C2>;
-    I2C2_ER => i2c::ErrorInterruptHandler<peripherals::I2C2>;
+    USART3 => usart::InterruptHandler<peripherals::USART3>;
 });
-
-// Default I2C Address
-const SLF3X_I2C1_ADDRESS: u8 = 0x08;
-const SLF3X_I2C2_ADDRESS: u8 = 0x0F;
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
-    info!("Hello world!");
-
     let p = embassy_stm32::init(Default::default());
+    info!("Hello World!");
 
     let mut config = Config::default();
-    config.scl_pullup = true;
-    config.sda_pullup = true;
+    config.baudrate = 19200;
+    config.parity = Parity::ParityNone;
+    config.stop_bits = StopBits::STOP1;
+    config.data_bits = DataBits::DataBits8;
 
-    let i2c = I2c::new(
-        p.I2C2,
-        p.PB10,
-        p.PB11,
-        Irqs,
-        p.DMA1_CH7,
-        p.DMA1_CH2,
-        Hertz(100_000),
-        config,
-    );
+    let mut usart =
+        Uart::new(p.USART3, p.PD9, p.PD8, Irqs, p.DMA1_CH3, p.DMA1_CH1, config).unwrap();
 
-    Timer::after_millis(100).await;
+    let cmd = [0xFF, 0xFE, 0x02, 0x02, 0x01]; //this is the command to read the serial no
 
-    let mut flow_sensor = SLF3S::new(i2c);
-
-    // match flow_sensor.start_measurement().await {
-    //     Ok(()) => info!("start_measurement command sent successfully"),
-    //     Err(e) => error!("Error sending start_measurement command: {:?}", e),
-    // };
-
-    // let start_time = Instant::now();
-    // let sample_duration = Duration::from_secs(1);
-    // let sample_interval = Duration::from_millis(20); // 50 Hz = 20 ms interval
-
-    // loop {
-    //     let loop_start = Instant::now();
-
-    //     match flow_sensor.read_sample().await {
-    //         Ok((a, b)) => info!("{}, {}", a, b),
-    //         Err(e) => error!("Error reading sample: {:?}", e),
-    //     }
-
-    //     if Instant::now() - start_time >= sample_duration {
-    //         break;
-    //     }
-
-    //     let elapsed = Instant::now() - loop_start;
-    //     if elapsed < sample_interval {
-    //         Timer::after(sample_interval - elapsed).await;
-    //     }
-    // }
-
-    // match flow_sensor.stop_measurement().await {
-    //     Ok(()) => info!("stop_measurement command sent successfully"),
-    //     Err(e) => error!("Error stop_measurement first command: {:?}", e),
-    // };
-
-    info!("{}", flow_sensor.rtrn_addr());
-
-    match flow_sensor.change_addr(0x000F, p.PA7).await {
-        Ok(()) => info!("change_addr command sent successfully"),
-        Err(e) => error!("Error sending change_addr command: {:?}", e),
+    match usart.write(&cmd).await {
+        Ok(_) => {
+            info!("Command sent successfully");
+        }
+        Err(_) => {
+            error!("Failed to send command");
+        }
     }
 
-    match flow_sensor.start_measurement().await {
-        Ok(()) => info!("start_measurement command sent successfully"),
-        Err(e) => error!("Error sending start_measurement command: {:?}", e),
+    let mut response = [0u8; 20];
+    let mut index = 0;
+    while index < response.len() {
+        match usart.read(&mut response[index..index + 1]).await {
+            Ok(_) => {
+                index += 1;
+                if index >= 3 && response[2] as usize + 3 == index {
+                    break;
+                }
+            }
+            Err(_) => error!("error while reading"),
+        }
     }
 
-    info!("{}", flow_sensor.rtrn_addr());
+    if index >= 6 && response[0] == 0xFF && response[1] == 0xFA {
+        let mut serial_number = [0u8; 15];
+        serial_number.copy_from_slice(&response[3..18]);
+        info!("{:02X}", serial_number)
+    } else {
+        error!("error displaying the serial number")
+    }
 }
