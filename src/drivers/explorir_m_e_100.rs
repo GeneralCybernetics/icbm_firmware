@@ -1,6 +1,6 @@
 use core::num;
 
-use defmt::info;
+// use defmt::info;
 use embassy_stm32::mode::Async;
 use embassy_stm32::usart::{Error, Uart};
 use heapless::String;
@@ -30,13 +30,12 @@ impl<'d> ExplorIrME100<'d> {
     pub fn new(uart: Uart<'d, Async>) -> Self {
         let mut uninit = ExplorIrME100 {
             uart: uart,
-            mode: Mode::Streaming,
+            mode: Mode::Polling,
             output_value: OutputValues::FilteredCO2,
         };
 
-        uninit.change_mode(Mode::Streaming);
-        uninit.change_output(OutputValues::FilteredCO2);
-
+        let _ = uninit.change_mode(Mode::Polling);
+        let _ = uninit.change_output(OutputValues::FilteredCO2);
         let init = uninit;
         init
     }
@@ -73,6 +72,7 @@ impl<'d> ExplorIrME100<'d> {
         }
     }
 
+    //returns the value in ppm as i32
     pub async fn get_filtered_co2(&mut self) -> Result<i32, &'static str> {
         let cmd = b"Z\r\n";
 
@@ -89,7 +89,7 @@ impl<'d> ExplorIrME100<'d> {
         }
 
         let co2_reading = match core::str::from_utf8(&response[3..=7]) {
-            Ok(s) => s,
+            Ok(co2_str) => co2_str,
             Err(_) => return Err("Failed to parse response as UTF-8"),
         };
 
@@ -99,6 +99,7 @@ impl<'d> ExplorIrME100<'d> {
         }
     }
 
+    //returns the value in ppm as i32
     pub async fn get_unfiltered_co2(&mut self) -> Result<i32, &'static str> {
         let cmd = b"z\r\n";
 
@@ -115,7 +116,7 @@ impl<'d> ExplorIrME100<'d> {
         }
 
         let co2_reading = match core::str::from_utf8(&response[3..=7]) {
-            Ok(s) => s,
+            Ok(co2_str) => co2_str,
             Err(_) => return Err("Failed to parse response as UTF-8"),
         };
 
@@ -125,6 +126,7 @@ impl<'d> ExplorIrME100<'d> {
         }
     }
 
+    //reports in compensation value
     pub async fn get_pressure_and_concentration(&mut self) -> Result<i32, &'static str> {
         let cmd = b"s\r\n";
 
@@ -140,16 +142,20 @@ impl<'d> ExplorIrME100<'d> {
             Err(_) => return Err("Failed to read from UART"),
         }
 
-        info!("{:#x}", &response);
+        // info!("{:#x}", &response);
 
-        let co2_reading = match core::str::from_utf8(&response[3..=7]) {
-            Ok(s) => s,
-            Err(_) => return Err("Failed to parse response as UTF-8"),
-        };
+        if let Some(end_pos) = response.iter().position(|&x| x == 0x0D) {
+            let co2_reading = match core::str::from_utf8(&response[3..end_pos]) {
+                Ok(s) => s,
+                Err(_) => return Err("Failed to parse response as UTF-8"),
+            };
 
-        match co2_reading.parse::<i32>() {
-            Ok(num) => Ok(num),
-            Err(_) => Err("Failed to parse Pressure & Concentration reading as integer"),
+            match co2_reading.parse::<i32>() {
+                Ok(num) => Ok(num),
+                Err(_) => Err("Failed to parse Pressure & Concentration reading as integer"),
+            }
+        } else {
+            Err("0x0D not found in response")
         }
     }
 
@@ -167,11 +173,12 @@ impl<'d> ExplorIrME100<'d> {
             + (1.2813 * altitude as f64)
             + 8229.2) as i32;
 
-        // info!("{:?}", compensation_value);
         let mut buffer = itoa::Buffer::new();
         let num_str = buffer.format(compensation_value);
 
-        let mut cmd = [0u8; 10];
+        // info!("{:?}", compensation_value);
+
+        let mut cmd = [0u8; 9];
         let mut index = 0;
         index += b"S ".len();
         cmd[0..index].copy_from_slice(b"S ");
@@ -186,10 +193,11 @@ impl<'d> ExplorIrME100<'d> {
     }
 
     pub async fn calibrate(&mut self, ppm: u32) -> Result<(), &'static str> {
-        let scaled_val = ppm / 100;
+        let scaled_val = ppm / CO2_SCALE_VALUE as u32;
         let mut buffer = itoa::Buffer::new();
         let num_str = buffer.format(scaled_val);
 
+        //a bigger array is mot a problem since 0x00 in the end does not affect the command, the sensor reponds to both ([0x2E, 0x0D, 0x0A]) and ([0x2E, 0x0D, 0x0A, 0x00])
         let mut cmd = [0u8; 10];
         let mut index = 0;
         index += b"X ".len();
@@ -205,9 +213,10 @@ impl<'d> ExplorIrME100<'d> {
         Ok(())
     }
 
+    //input both the values in ppm
     pub async fn fine_tune(&mut self, ppm: u32, sensor_output: u32) -> Result<(), &'static str> {
-        let scaled_ppm = ppm;
-        let scaled_output = sensor_output;
+        let scaled_ppm = ppm / CO2_SCALE_VALUE as u32;
+        let scaled_output = sensor_output / CO2_SCALE_VALUE as u32;
 
         let mut buffer_ppm = itoa::Buffer::new();
         let ppm_str = buffer_ppm.format(scaled_ppm);
@@ -218,26 +227,20 @@ impl<'d> ExplorIrME100<'d> {
         let mut cmd = [0u8; 20];
         let mut index = 0;
 
-        // Start with "F "
         index += b"F ".len();
         cmd[0..index].copy_from_slice(b"F ");
 
-        // Add the PPM value
-        cmd[index..index + ppm_str.len()].copy_from_slice(ppm_str.as_bytes());
-        index += ppm_str.len();
-
-        // Add a space between the PPM and output value
-        cmd[index] = b' ';
-        index += 1;
-
-        // Add the sensor output value
         cmd[index..index + output_str.len()].copy_from_slice(output_str.as_bytes());
         index += output_str.len();
 
-        // Add carriage return and newline (\r\n)
+        cmd[index] = b' ';
+        index += 1;
+
+        cmd[index..index + ppm_str.len()].copy_from_slice(ppm_str.as_bytes());
+        index += ppm_str.len();
+
         cmd[index..index + 2].copy_from_slice(b"\r\n");
 
-        // Send the command over UART
         self.uart
             .write(&cmd)
             .await
@@ -253,42 +256,51 @@ impl<'d> ExplorIrME100<'d> {
             .await
             .map_err(|_| "Failed to write command")?;
 
-        let mut buf = [0u8; 47]; // Buffer to hold the response, size 47
+        let mut buf = [0u8; 47];
 
         self.uart
             .read(&mut buf)
             .await
             .map_err(|_| "Failed to read response")?;
 
-        self.parse_response(&buf[..], 'Y')
-    }
+        let mut result: String<47> = String::new();
 
-    fn parse_response(&self, resp: &[u8], check_letter: char) -> Result<String<47>, &'static str> {
-        const ASCII_SPACE: u8 = 0x20;
-        const CR: u8 = 0x0D;
-        const LF: u8 = 0x0A;
-        let char_ascii = check_letter as u8;
-        let arr_len = resp.len();
-
-        if arr_len < 4 {
-            return Err("Response too short");
-        }
-
-        if resp[0] == ASCII_SPACE
-            && resp[arr_len - 2] == CR
-            && resp[arr_len - 1] == LF
-            && resp[1] == char_ascii
-        {
-            // Use heapless String to store the response
-            let mut result: String<47> = String::new();
-            if let Ok(parsed_str) = core::str::from_utf8(&resp[..arr_len - 2]) {
-                result.push_str(parsed_str).map_err(|_| "String overflow")?;
-                Ok(result)
-            } else {
-                Err("Invalid UTF-8 sequence")
-            }
+        if let Ok(parsed_str) = core::str::from_utf8(&buf[0..45]) {
+            result.push_str(parsed_str).map_err(|_| "String overflow")?;
+            Ok(result)
         } else {
-            Err("Error parsing response")
+            Err("Invalid UTF-8 sequence")
         }
     }
+
+    //implement a global response checker later
+
+    // fn parse_response(&self, resp: &[u8], check_letter: char) -> Result<String<47>, &'static str> {
+    //     const ASCII_SPACE: u8 = 0x20;
+    //     const CR: u8 = 0x0D;
+    //     const LF: u8 = 0x0A;
+    //     let char_ascii = check_letter as u8;
+    //     let arr_len = resp.len();
+
+    //     if arr_len < 4 {
+    //         return Err("Response too short");
+    //     }
+
+    //     if resp[0] == ASCII_SPACE
+    //         && resp[arr_len - 2] == CR
+    //         && resp[arr_len - 1] == LF
+    //         && resp[1] == char_ascii
+    //     {
+    //         // Use heapless String to store the response
+    //         let mut result: String<47> = String::new();
+    //         if let Ok(parsed_str) = core::str::from_utf8(&resp[..arr_len - 2]) {
+    //             result.push_str(parsed_str).map_err(|_| "String overflow")?;
+    //             Ok(result)
+    //         } else {
+    //             Err("Invalid UTF-8 sequence")
+    //         }
+    //     } else {
+    //         Err("Error parsing response")
+    //     }
+    // }
 }

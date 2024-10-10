@@ -30,18 +30,18 @@ async fn main(_spawner: Spawner) {
 
     Timer::after_secs(2).await;
 
-    // let cmd = b".\r\n"; //this is the command to read the serial no
+    // let cmd = ([0x2E, 0x0D, 0x0A, 0x00]); //this is the command to read the serial no
 
-    // match usart.write(cmd).await {
-    //     Ok(_) => {
-    //         info!("Command sent successfully");
+    // match usart.write(&cmd).await {
+    //     Ok(val) => {
+    //         info!("Command sent successfully: {}", val);
     //     }
     //     Err(_) => {
     //         error!("Failed to send command");
     //     }
     // }
 
-    // let mut response = [0u8; 47];
+    // let mut response = [0u8; 10];
     // let mut index = 0;
 
     // while index < response.len() {
@@ -60,6 +60,7 @@ async fn main(_spawner: Spawner) {
     //     "Raw response bytes: {:?}",
     //     core::str::from_utf8(&response[..index]).unwrap_or("<invalid UTF-8>")
     // );
+
     let mut co2_sensor = ExplorIrME100::new(usart);
     match co2_sensor.get_filtered_co2().await {
         Ok(co2_level) => {
@@ -70,10 +71,16 @@ async fn main(_spawner: Spawner) {
         }
     }
 
-    match co2_sensor.set_pressure_and_concentration(3050.0).await {
-        Ok(_) => info!("the value has been set"),
-        Err(e) => info!("{}", e),
+    match co2_sensor.read_serial_no().await {
+        Ok(msg) => {
+            info!("{}", msg);
+        }
+        Err(error_msg) => {
+            info!("Failed: {}", error_msg);
+        }
     }
+
+    Timer::after_secs(2).await;
 
     match co2_sensor.get_pressure_and_concentration().await {
         Ok(val) => info!("the value is now {}", val),
