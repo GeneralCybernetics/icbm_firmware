@@ -1,7 +1,10 @@
+use core::num;
+
 use defmt::info;
 use embassy_stm32::mode::Async;
 use embassy_stm32::usart::{Error, Uart};
 use heapless::String;
+use itoa::Buffer;
 
 const CO2_SCALE_VALUE: i32 = 100;
 pub enum Mode {
@@ -150,6 +153,99 @@ impl<'d> ExplorIrME100<'d> {
         }
     }
 
+    //altitude must be in meter
+    pub async fn set_pressure_and_concentration(
+        &mut self,
+        altitude: f32,
+    ) -> Result<(), &'static str> {
+        if altitude < 0.0 || altitude > 3050.0 {
+            return Err("altitude out of range");
+        }
+
+        //I charted the values and this quadratic curve fit the comp val best
+        let compensation_value = ((-0.000043713 * altitude as f64 * altitude as f64)
+            + (1.2813 * altitude as f64)
+            + 8229.2) as i32;
+
+        // info!("{:?}", compensation_value);
+        let mut buffer = itoa::Buffer::new();
+        let num_str = buffer.format(compensation_value);
+
+        let mut cmd = [0u8; 10];
+        let mut index = 0;
+        index += b"S ".len();
+        cmd[0..index].copy_from_slice(b"S ");
+        cmd[index..index + num_str.len()].copy_from_slice(num_str.as_bytes());
+        index += num_str.len();
+        cmd[index..index + 2].copy_from_slice(b"\r\n");
+
+        self.uart
+            .write(&cmd)
+            .await
+            .map_err(|_| "Failed to write to UART")
+    }
+
+    pub async fn calibrate(&mut self, ppm: u32) -> Result<(), &'static str> {
+        let scaled_val = ppm / 100;
+        let mut buffer = itoa::Buffer::new();
+        let num_str = buffer.format(scaled_val);
+
+        let mut cmd = [0u8; 10];
+        let mut index = 0;
+        index += b"X ".len();
+        cmd[0..index].copy_from_slice(b"X ");
+        cmd[index..index + num_str.len()].copy_from_slice(num_str.as_bytes());
+        index += num_str.len();
+        cmd[index..index + 2].copy_from_slice(b"\r\n");
+
+        self.uart
+            .write(&cmd)
+            .await
+            .map_err(|_| "Failed to write X command to UART")?;
+        Ok(())
+    }
+
+    pub async fn fine_tune(&mut self, ppm: u32, sensor_output: u32) -> Result<(), &'static str> {
+        let scaled_ppm = ppm;
+        let scaled_output = sensor_output;
+
+        let mut buffer_ppm = itoa::Buffer::new();
+        let ppm_str = buffer_ppm.format(scaled_ppm);
+
+        let mut buffer_output = itoa::Buffer::new();
+        let output_str = buffer_output.format(scaled_output);
+
+        let mut cmd = [0u8; 20];
+        let mut index = 0;
+
+        // Start with "F "
+        index += b"F ".len();
+        cmd[0..index].copy_from_slice(b"F ");
+
+        // Add the PPM value
+        cmd[index..index + ppm_str.len()].copy_from_slice(ppm_str.as_bytes());
+        index += ppm_str.len();
+
+        // Add a space between the PPM and output value
+        cmd[index] = b' ';
+        index += 1;
+
+        // Add the sensor output value
+        cmd[index..index + output_str.len()].copy_from_slice(output_str.as_bytes());
+        index += output_str.len();
+
+        // Add carriage return and newline (\r\n)
+        cmd[index..index + 2].copy_from_slice(b"\r\n");
+
+        // Send the command over UART
+        self.uart
+            .write(&cmd)
+            .await
+            .map_err(|_| "Failed to write F fine-tune command to UART")?;
+
+        Ok(())
+    }
+
     pub async fn read_serial_no(&mut self) -> Result<String<47>, &'static str> {
         let cmd = b"Y\r\n";
         self.uart
@@ -195,10 +291,4 @@ impl<'d> ExplorIrME100<'d> {
             Err("Error parsing response")
         }
     }
-
-    //fine tuning
-    //M command co2 measurement returner
-    //Zero point in known concentration
-    //return pressure and concentration compensation values
-    //sets pressure and concentration compensation values
 }

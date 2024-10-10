@@ -70,12 +70,13 @@ async fn main(_spawner: Spawner) {
         }
     }
 
-    match co2_sensor.get_unfiltered_co2().await {
-        Ok(co2_level) => {
-            info!("CO2 level: {} ppm", co2_level);
-        }
-        Err(error_msg) => {
-            info!("Failed to get CO2 reading: {}", error_msg);
-        }
+    match co2_sensor.set_pressure_and_concentration(3050.0).await {
+        Ok(_) => info!("the value has been set"),
+        Err(e) => info!("{}", e),
+    }
+
+    match co2_sensor.get_pressure_and_concentration().await {
+        Ok(val) => info!("the value is now {}", val),
+        Err(e) => info!("{}", e),
     }
 }

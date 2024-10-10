@@ -13,6 +13,7 @@ embassy-usb = { git = "https://github.com/embassy-rs/embassy", rev = "42815e944a
 embassy-net = { git = "https://github.com/embassy-rs/embassy", rev = "42815e944af09f7de6278483caf0fb7e65ab1d1d", features = ["defmt", "tcp", "dhcpv4", "medium-ethernet"] }
 embassy-net-wiznet = { git = "https://github.com/embassy-rs/embassy", rev = "42815e944af09f7de6278483caf0fb7e65ab1d1d", features = ["defmt"] }
 embassy-futures = { git = "https://github.com/embassy-rs/embassy", rev = "42815e944af09f7de6278483caf0fb7e65ab1d1d" }
+itoa = { version = "1.0", default-features = false }
 
 defmt = "0.3"
 defmt-rtt = "0.4"
