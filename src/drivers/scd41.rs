@@ -92,6 +92,16 @@ enum SCD41State {
     Measurement,
 }
 
+pub enum SensorSettings {
+    Custom {
+        current_temp: f32,
+        reference_temp: f32,
+        pressure: u32,
+        altitude: u16,
+    },
+    Default,
+}
+
 pub struct SCD41<'d> {
     i2c: I2c<'d, Async>,
     i2c_address: u8,
@@ -99,7 +109,6 @@ pub struct SCD41<'d> {
 }
 impl<'d> SCD41<'d> {
     //N.B DO NOT USE THE SCD41 WITHOUT CALLING INIT
-    //verified
     pub fn new(i2c: I2c<'d, Async>) -> Self {
         SCD41 {
             i2c,
@@ -108,8 +117,7 @@ impl<'d> SCD41<'d> {
         }
     }
 
-    //verified
-    pub async fn init(&mut self) -> Result<(), &'static str> {
+    pub async fn init(&mut self, settings: Option<SensorSettings>) -> Result<(), &'static str> {
         Timer::after_millis(POWERUP_TIME).await;
 
         if let Err(e) = self.stop_periodic_measurement().await {
@@ -132,17 +140,46 @@ impl<'d> SCD41<'d> {
             }
         }
 
+        match settings {
+            Some(SensorSettings::Custom {
+                current_temp,
+                reference_temp,
+                pressure,
+                altitude,
+            }) => {
+                match self
+                    .set_internals(current_temp, reference_temp, pressure, altitude)
+                    .await
+                {
+                    Ok(_) => info!("Internal sensor settings successfully applied"),
+                    Err(e) => error!("Failed to set internal sensor settings: {}", e),
+                }
+            }
+            Some(SensorSettings::Default) | None => {
+                let current_offset = match self.get_temp_offset().await {
+                    Ok(offset) => offset,
+                    Err(e) => {
+                        error!("Failed to get current temperature offset: {}", e);
+                        return Err("Failed to initialize sensor");
+                    }
+                };
+
+                match self.set_internals(4.0, current_offset, 101_300, 0).await {
+                    Ok(_) => info!("Default sensor settings successfully applied"),
+                    Err(e) => error!("Failed to set default sensor settings: {}", e),
+                }
+            }
+        }
+
         if let Err(e) = self.start_periodic_measurement().await {
             error!("Failed to start periodic measurement: {}", e);
             return Err("Failed to start periodic measurement");
         }
         info!("CMD_START_PERIODIC_MEASUREMENT successfully sent");
-        // [TODO] Set offsets here!!
 
         Ok(())
     }
 
-    //verified
     pub async fn start_periodic_measurement(&mut self) -> Result<(), &'static str> {
         self.send_command(&CMD_START_PERIODIC_MEASUREMENT)
             .await
@@ -152,7 +189,6 @@ impl<'d> SCD41<'d> {
         Ok(())
     }
 
-    //verified
     pub async fn read_measurement(&mut self) -> Result<(u16, f32, f32), &'static str> {
         let mut buf = [0u8; 9];
         let mut attempts = 0;
@@ -192,7 +228,6 @@ impl<'d> SCD41<'d> {
         Err("Unexpected error in read_measurement")
     }
 
-    //verified
     pub async fn stop_periodic_measurement(&mut self) -> Result<(), &'static str> {
         self.send_command(&CMD_STOP_PERIODIC_MEASUREMENT)
             .await
@@ -234,7 +269,7 @@ impl<'d> SCD41<'d> {
             .await
         {
             Ok(()) => {
-                info!("{:#x}", buf);
+                // info!("{:#x}", buf);
                 let altitude = u16::from_be_bytes([buf[0], buf[1]]);
                 Ok(altitude)
             }
@@ -243,7 +278,6 @@ impl<'d> SCD41<'d> {
     }
 
     pub async fn get_ambient_pressure(&mut self) -> Result<u32, &'static str> {
-        self.ensure_idle().await?;
         let mut buf = [0u8; 3];
         match self
             .read_sequence(
@@ -262,7 +296,7 @@ impl<'d> SCD41<'d> {
         }
     }
 
-    pub async fn set_temperature_offset(
+    pub async fn set_temp_offset(
         &mut self,
         current_temp: f32,
         reference_temp: f32,
@@ -315,6 +349,54 @@ impl<'d> SCD41<'d> {
             .await
     }
 
+    //the answer should be: [0x7d, 0x6b, 0xab, 0x7b, 0x7, 0x37, 0x3b, 0x12, 0x8]
+    pub async fn get_serial_number(&mut self) -> Result<[u8; 9], &'static str> {
+        self.ensure_idle().await?;
+        let mut buf = [0u8; 9]; // 3 words, each followed by CRC (3 * (2 + 1) = 9)
+
+        match self
+            .read_sequence(
+                &CMD_GET_SERIAL_NUMBER,
+                &mut buf,
+                EXECUTION_TIME_GET_SERIAL_NUMBER,
+            )
+            .await
+        {
+            Ok(()) => Ok(buf),
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn set_internals(
+        &mut self,
+        current_temp: f32,
+        reference_temp: f32,
+        pressure: u32,
+        altitude: u16,
+    ) -> Result<(), &'static str> {
+        self.ensure_idle().await?;
+
+        self.set_ambient_pressure(pressure).await?;
+        match self.get_ambient_pressure().await {
+            Ok(set_pressure) => info!("Ambient pressure has been set to: {} Pa", set_pressure),
+            Err(e) => error!("Failed to get ambient pressure: {}", e),
+        }
+
+        self.set_sensor_altitude(altitude).await?;
+        match self.get_sensor_altitude().await {
+            Ok(set_altitude) => info!("Sensor altitude has been set to: {} m", set_altitude),
+            Err(e) => error!("Failed to get sensor altitude: {}", e),
+        }
+
+        self.set_temp_offset(current_temp, reference_temp).await?;
+        match self.get_temp_offset().await {
+            Ok(offset) => info!("Temperature offset has been set to: {} °C", offset),
+            Err(e) => error!("Failed to get temperature offset: {}", e),
+        }
+
+        Ok(())
+    }
+
     async fn perform_self_test(&mut self) -> Result<bool, &'static str> {
         self.ensure_idle().await?;
         let mut buf = [0u8; 3];
@@ -339,8 +421,7 @@ impl<'d> SCD41<'d> {
         }
     }
 
-    //verified
-    pub async fn get_data_ready_status(&mut self) -> Result<bool, &'static str> {
+    async fn get_data_ready_status(&mut self) -> Result<bool, &'static str> {
         //the data gets ready roughly once every 3000 milis
         let mut buf = [0u8; 3];
 
@@ -364,26 +445,6 @@ impl<'d> SCD41<'d> {
         }
     }
 
-    //verified
-    //the answer should be: [0x7d, 0x6b, 0xab, 0x7b, 0x7, 0x37, 0x3b, 0x12, 0x8]
-    pub async fn get_serial_number(&mut self) -> Result<[u8; 9], &'static str> {
-        self.ensure_idle().await?;
-        let mut buf = [0u8; 9]; // 3 words, each followed by CRC (3 * (2 + 1) = 9)
-
-        match self
-            .read_sequence(
-                &CMD_GET_SERIAL_NUMBER,
-                &mut buf,
-                EXECUTION_TIME_GET_SERIAL_NUMBER,
-            )
-            .await
-        {
-            Ok(()) => Ok(buf),
-            Err(e) => Err(e),
-        }
-    }
-
-    //verified
     fn crc8(&self, data: &[u8]) -> u8 {
         let mut crc: u8 = CRC8_INIT;
         for &byte in data {
@@ -399,7 +460,6 @@ impl<'d> SCD41<'d> {
         crc
     }
 
-    //verified
     async fn send_command(&mut self, address: &[u8]) -> Result<(), &'static str> {
         self.i2c
             .write(self.i2c_address, address)
@@ -425,7 +485,6 @@ impl<'d> SCD41<'d> {
             .map_err(|_| "Error writing command")
     }
 
-    //verified
     async fn read_sequence(
         &mut self,
         address: &[u8],

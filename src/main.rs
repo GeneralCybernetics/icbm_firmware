@@ -11,7 +11,7 @@ use embassy_stm32::time::Hertz;
 use embassy_time::{block_for, Duration, Timer};
 use {defmt_rtt as _, panic_probe as _};
 mod drivers;
-use drivers::scd41::SCD41;
+use drivers::scd41::{SensorSettings, SCD41};
 
 bind_interrupts!(struct Irqs {
     I2C1_EV => i2c::EventInterruptHandler<peripherals::I2C1>;
@@ -25,7 +25,7 @@ async fn main(_spawner: Spawner) {
     config.scl_pullup = true;
     config.sda_pullup = true;
 
-    let mut i2c = I2c::new(
+    let i2c = I2c::new(
         p.I2C1,
         p.PB6,
         p.PB7,
@@ -38,27 +38,54 @@ async fn main(_spawner: Spawner) {
 
     let mut scd41sensor = SCD41::new(i2c);
 
-    match scd41sensor.stop_periodic_measurement().await {
+    match scd41sensor.init(Some(SensorSettings::Default)).await {
         Ok(()) => {
-            info!("stop_periodic_measurement successful");
+            info!("Initialization successful");
         }
         Err(e) => {
             error!("error: {}", e)
         }
     }
 
-    // match scd41sensor.get_serial_number().await {
-    //     Ok(serial_no) => {
-    //         info!("serial_no: {}", serial_no);
+    // match scd41sensor.stop_periodic_measurement().await {
+    //     Ok(()) => {
+    //         info!("stop_periodic_measurement successful");
     //     }
     //     Err(e) => {
     //         error!("error: {}", e)
     //     }
     // }
 
-    // match scd41sensor.init().await {
+    // match scd41sensor.get_ambient_pressure().await {
+    //     Ok(num) => {
+    //         info!("sensor altitude: {}", num);
+    //     }
+    //     Err(e) => {
+    //         error!("error: {}", e)
+    //     }
+    // }
+
+    // match scd41sensor.set_ambient_pressure(101_300).await {
     //     Ok(()) => {
-    //         info!("Initialization successful");
+    //         info!("set done");
+    //     }
+    //     Err(e) => {
+    //         error!("error: {}", e)
+    //     }
+    // }
+
+    // match scd41sensor.get_ambient_pressure().await {
+    //     Ok(num) => {
+    //         info!("sensor altitude: {}", num);
+    //     }
+    //     Err(e) => {
+    //         error!("error: {}", e)
+    //     }
+    // }
+
+    // match scd41sensor.get_serial_number().await {
+    //     Ok(serial_no) => {
+    //         info!("serial_no: {}", serial_no);
     //     }
     //     Err(e) => {
     //         error!("error: {}", e)
