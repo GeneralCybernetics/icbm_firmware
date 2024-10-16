@@ -47,12 +47,51 @@ async fn main(_spawner: Spawner) {
         }
     }
 
-    match scd41sensor.get_serial_number().await {
-        Ok(abc) => {
-            info!("we got: {:#x}", abc)
-        }
-        Err(e) => {
-            error!("error: {}", e)
-        }
-    }
+    // match scd41sensor.get_serial_number().await {
+    //     Ok(serial_no) => {
+    //         info!("serial_no: {}", serial_no);
+    //     }
+    //     Err(e) => {
+    //         error!("error: {}", e)
+    //     }
+    // }
+
+    // match scd41sensor.init().await {
+    //     Ok(()) => {
+    //         info!("Initialization successful");
+    //     }
+    //     Err(e) => {
+    //         error!("error: {}", e)
+    //     }
+    // }
+
+    // match scd41sensor.get_serial_number().await {
+    //     Ok(serial_no) => {
+    //         info!("serial_no: {}", serial_no);
+    //     }
+    //     Err(e) => {
+    //         error!("error: {}", e)
+    //     }
+    // }
+
+    // match scd41sensor.read_measurement().await {
+    //     Ok((a, b, c)) => {
+    //         info!(
+    //             "The data is ready: co2: {}, temp: {}, humidity: {}",
+    //             a, b, c
+    //         );
+    //     }
+    //     Err(e) => {
+    //         error!("error: {}", e)
+    //     }
+    // }
+
+    // match scd41sensor.get_serial_number().await {
+    //     Ok(abc) => {
+    //         info!("we got: {:#x}", abc)
+    //     }
+    //     Err(e) => {
+    //         error!("error: {}", e)
+    //     }
+    // }
 }
