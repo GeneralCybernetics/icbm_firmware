@@ -3,87 +3,122 @@
 
 use defmt::*;
 use embassy_executor::Spawner;
-use embassy_stm32::usart::{Config, DataBits, Parity, StopBits, Uart};
-use embassy_stm32::{bind_interrupts, peripherals, usart};
-use embassy_time::Timer;
+use embassy_stm32::gpio::Output;
+use embassy_stm32::i2c::{Config, I2c};
+use embassy_stm32::{bind_interrupts, i2c, peripherals};
+
+use embassy_stm32::time::Hertz;
+use embassy_time::{block_for, Duration, Timer};
 use {defmt_rtt as _, panic_probe as _};
 mod drivers;
-use drivers::explorir_m_e_100::ExplorIrME100;
+use drivers::scd41::{SensorSettings, SCD41};
 
 bind_interrupts!(struct Irqs {
-    USART3 => usart::InterruptHandler<peripherals::USART3>;
+    I2C1_EV => i2c::EventInterruptHandler<peripherals::I2C1>;
+    I2C1_ER => i2c::ErrorInterruptHandler<peripherals::I2C1>;
 });
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
     let p = embassy_stm32::init(Default::default());
-    info!("Hello World!");
-
     let mut config = Config::default();
-    config.baudrate = 9600;
-    config.parity = Parity::ParityNone;
-    config.stop_bits = StopBits::STOP1;
-    config.data_bits = DataBits::DataBits8;
+    config.scl_pullup = true;
+    config.sda_pullup = true;
 
-    let mut usart =
-        Uart::new(p.USART3, p.PD9, p.PD8, Irqs, p.DMA1_CH3, p.DMA1_CH1, config).unwrap();
+    let i2c = I2c::new(
+        p.I2C1,
+        p.PB6,
+        p.PB7,
+        Irqs,
+        p.DMA1_CH6,
+        p.DMA1_CH0,
+        Hertz(100_000),
+        config,
+    );
 
-    Timer::after_secs(2).await;
+    let mut scd41sensor = SCD41::new(i2c);
 
-    // let cmd = ([0x2E, 0x0D, 0x0A, 0x00]); //this is the command to read the serial no
+    match scd41sensor.init(Some(SensorSettings::Default)).await {
+        Ok(()) => {
+            info!("Initialization successful");
+        }
+        Err(e) => {
+            error!("error: {}", e)
+        }
+    }
 
-    // match usart.write(&cmd).await {
-    //     Ok(val) => {
-    //         info!("Command sent successfully: {}", val);
+    // match scd41sensor.stop_periodic_measurement().await {
+    //     Ok(()) => {
+    //         info!("stop_periodic_measurement successful");
     //     }
-    //     Err(_) => {
-    //         error!("Failed to send command");
-    //     }
-    // }
-
-    // let mut response = [0u8; 10];
-    // let mut index = 0;
-
-    // while index < response.len() {
-    //     match usart.read(&mut response[index..index + 1]).await {
-    //         Ok(_) => {
-    //             index += 1;
-    //         }
-    //         Err(_) => {
-    //             error!("Error while reading");
-    //             break;
-    //         }
+    //     Err(e) => {
+    //         error!("error: {}", e)
     //     }
     // }
 
-    // info!(
-    //     "Raw response bytes: {:?}",
-    //     core::str::from_utf8(&response[..index]).unwrap_or("<invalid UTF-8>")
-    // );
+    // match scd41sensor.get_ambient_pressure().await {
+    //     Ok(num) => {
+    //         info!("sensor altitude: {}", num);
+    //     }
+    //     Err(e) => {
+    //         error!("error: {}", e)
+    //     }
+    // }
 
-    let mut co2_sensor = ExplorIrME100::new(usart);
-    match co2_sensor.get_filtered_co2().await {
-        Ok(co2_level) => {
-            info!("CO2 level: {} ppm", co2_level);
-        }
-        Err(error_msg) => {
-            info!("Failed to get CO2 reading: {}", error_msg);
-        }
-    }
+    // match scd41sensor.set_ambient_pressure(101_300).await {
+    //     Ok(()) => {
+    //         info!("set done");
+    //     }
+    //     Err(e) => {
+    //         error!("error: {}", e)
+    //     }
+    // }
 
-    match co2_sensor.read_serial_no().await {
-        Ok(msg) => {
-            info!("{}", msg);
-        }
-        Err(error_msg) => {
-            info!("Failed: {}", error_msg);
-        }
-    }
+    // match scd41sensor.get_ambient_pressure().await {
+    //     Ok(num) => {
+    //         info!("sensor altitude: {}", num);
+    //     }
+    //     Err(e) => {
+    //         error!("error: {}", e)
+    //     }
+    // }
 
-    Timer::after_secs(2).await;
+    // match scd41sensor.get_serial_number().await {
+    //     Ok(serial_no) => {
+    //         info!("serial_no: {}", serial_no);
+    //     }
+    //     Err(e) => {
+    //         error!("error: {}", e)
+    //     }
+    // }
 
-    match co2_sensor.get_pressure_and_concentration().await {
-        Ok(val) => info!("the value is now {}", val),
-        Err(e) => info!("{}", e),
-    }
+    // match scd41sensor.get_serial_number().await {
+    //     Ok(serial_no) => {
+    //         info!("serial_no: {}", serial_no);
+    //     }
+    //     Err(e) => {
+    //         error!("error: {}", e)
+    //     }
+    // }
+
+    // match scd41sensor.read_measurement().await {
+    //     Ok((a, b, c)) => {
+    //         info!(
+    //             "The data is ready: co2: {}, temp: {}, humidity: {}",
+    //             a, b, c
+    //         );
+    //     }
+    //     Err(e) => {
+    //         error!("error: {}", e)
+    //     }
+    // }
+
+    // match scd41sensor.get_serial_number().await {
+    //     Ok(abc) => {
+    //         info!("we got: {:#x}", abc)
+    //     }
+    //     Err(e) => {
+    //         error!("error: {}", e)
+    //     }
+    // }
 }
