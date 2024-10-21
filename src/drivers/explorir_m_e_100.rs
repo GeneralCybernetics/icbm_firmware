@@ -1,10 +1,6 @@
-use core::num;
-
-// use defmt::info;
 use embassy_stm32::mode::Async;
 use embassy_stm32::usart::{Error, Uart};
 use heapless::String;
-use itoa::Buffer;
 
 const CO2_SCALE_VALUE: i32 = 100;
 pub enum Mode {
@@ -13,7 +9,7 @@ pub enum Mode {
     Polling,
 }
 
-//these values can be expanded significantly later (ex: LED Signal) but are unnecessay at the moment, so I have decided to only include these 3:
+//these values can be expanded significantly later (ex: LED Signal) but are unnecessay at the moment
 pub enum OutputValues {
     FilteredCO2,
     UnfilteredCO2,
@@ -168,14 +164,13 @@ impl<'d> ExplorIrME100<'d> {
             return Err("altitude out of range");
         }
 
-        //I charted the values and this quadratic curve fit the comp val best
+        //the following quadratic curve fits the comp val best
         let compensation_value = ((-0.000043713 * altitude as f64 * altitude as f64)
             + (1.2813 * altitude as f64)
             + 8229.2) as i32;
 
         let mut buffer = itoa::Buffer::new();
         let num_str = buffer.format(compensation_value);
-
         // info!("{:?}", compensation_value);
 
         let mut cmd = [0u8; 9];
@@ -197,7 +192,6 @@ impl<'d> ExplorIrME100<'d> {
         let mut buffer = itoa::Buffer::new();
         let num_str = buffer.format(scaled_val);
 
-        //a bigger array is mot a problem since 0x00 in the end does not affect the command, the sensor reponds to both ([0x2E, 0x0D, 0x0A]) and ([0x2E, 0x0D, 0x0A, 0x00])
         let mut cmd = [0u8; 10];
         let mut index = 0;
         index += b"X ".len();
@@ -273,7 +267,7 @@ impl<'d> ExplorIrME100<'d> {
         }
     }
 
-    //implement a global response checker later
+    //LATER: global response checker
 
     // fn parse_response(&self, resp: &[u8], check_letter: char) -> Result<String<47>, &'static str> {
     //     const ASCII_SPACE: u8 = 0x20;

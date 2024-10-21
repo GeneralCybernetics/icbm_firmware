@@ -1,7 +1,7 @@
 use defmt::{error, info};
 use embassy_stm32::i2c::I2c;
 use embassy_stm32::mode::Async;
-use embassy_time::{Duration, Timer};
+use embassy_time::Timer;
 
 // I2C Address
 const SCD41_I2C_ADDRESS: u8 = 0x62;
@@ -58,15 +58,16 @@ const INITIAL_MEASURE_DELAY: u64 = 500;
 const STOP_MEASURE_DELAY: u64 = 500;
 const EXECUTION_TIME_PERFORM_SELF_TEST: u64 = 10000;
 const EXECUTION_TIME_READ_MEASUREMENT: u64 = 1;
-const EXECUTION_TIME_SET_TEMPERATURE_OFFSET: u64 = 1;
+// const EXECUTION_TIME_SET_TEMPERATURE_OFFSET: u64 = 1;
 const EXECUTION_TIME_GET_TEMPERATURE_OFFSET: u64 = 1;
-const EXECUTION_TIME_SET_SENSOR_ALTITUDE: u64 = 1;
+// const EXECUTION_TIME_SET_SENSOR_ALTITUDE: u64 = 1;
 const EXECUTION_TIME_GET_SENSOR_ALTITUDE: u64 = 1;
-const EXECUTION_TIME_SET_AMBIENT_PRESSURE: u64 = 1;
+// const EXECUTION_TIME_SET_AMBIENT_PRESSURE: u64 = 1;
 const EXECUTION_TIME_GET_AMBIENT_PRESSURE: u64 = 1;
 const EXECUTION_TIME_GET_DATA_READY_STATUS: u64 = 1;
 const DATA_READY_LOOP_DELAY: u64 = 3000;
 const EXECUTION_TIME_GET_SERIAL_NUMBER: u64 = 1;
+
 // const EXECUTION_TIME_PERFORM_FORCED_RECALIBRATION: u64 = 400;
 // const EXECUTION_TIME_SET_AUTOMATIC_SELF_CALIBRATION_ENABLED: u64 = 1;
 // const EXECUTION_TIME_GET_AUTOMATIC_SELF_CALIBRATION_ENABLED: u64 = 1;
@@ -323,7 +324,7 @@ impl<'d> SCD41<'d> {
             .await
     }
 
-    //this value must be in meters
+    //value must be in meters
     pub async fn set_sensor_altitude(&mut self, altitude: u16) -> Result<(), &'static str> {
         self.ensure_idle().await?;
         if altitude > 3000 {
@@ -336,7 +337,7 @@ impl<'d> SCD41<'d> {
             .await
     }
 
-    //value in pascals
+    //value must be in pascals
     pub async fn set_ambient_pressure(&mut self, pressure: u32) -> Result<(), &'static str> {
         if pressure < 70_000 || pressure > 120_000 {
             return Err("Pressure must be between 70,000 and 120,000 Pa");
@@ -349,7 +350,7 @@ impl<'d> SCD41<'d> {
             .await
     }
 
-    //the answer should be: [0x7d, 0x6b, 0xab, 0x7b, 0x7, 0x37, 0x3b, 0x12, 0x8]
+    //returns: [0x7d, 0x6b, 0xab, 0x7b, 0x7, 0x37, 0x3b, 0x12, 0x8]
     pub async fn get_serial_number(&mut self) -> Result<[u8; 9], &'static str> {
         self.ensure_idle().await?;
         let mut buf = [0u8; 9]; // 3 words, each followed by CRC (3 * (2 + 1) = 9)
@@ -422,7 +423,7 @@ impl<'d> SCD41<'d> {
     }
 
     async fn get_data_ready_status(&mut self) -> Result<bool, &'static str> {
-        //the data gets ready roughly once every 3000 milis
+        //data gets ready roughly once every 3000 milis
         let mut buf = [0u8; 3];
 
         match self
@@ -532,7 +533,7 @@ impl<'d> SCD41<'d> {
         }
     }
 
-    //reserved for later use in case we decide to use perform_forced_recalibration
+    //reserved for later use
     // async fn send_command_and_fetch_result(
     //     &mut self,
     //     address: &[u8],
