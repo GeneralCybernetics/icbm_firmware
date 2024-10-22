@@ -4,6 +4,7 @@ use embassy_stm32::timer::low_level::CountingMode;
 use embassy_stm32::timer::simple_pwm::{Ch1, PwmPin, SimplePwm};
 use embassy_stm32::timer::{Channel, GeneralInstance4Channel};
 use embassy_stm32::Peripheral;
+use embassy_time::Timer;
 
 pub enum HeaterState {
     Off,
@@ -37,6 +38,23 @@ impl<'d, T: GeneralInstance4Channel> Heater<'d, T> {
         Heater {
             pwm,
             state: HeaterState::Off,
+        }
+    }
+
+    //call repeatedly in an async loop with temperature sensor readings
+    pub async fn regulate_temp(
+        &mut self,
+        current_temp: f32,
+        setpoint: f32,
+        duty_cycle: u8,
+        interval_secs: u64,
+    ) {
+        if current_temp < setpoint {
+            self.heat(duty_cycle);
+            Timer::after_secs(interval_secs).await;
+            self.stop();
+        } else {
+            self.stop();
         }
     }
 
