@@ -35,7 +35,7 @@ async fn main(_spawner: Spawner) {
     }
 
     info!("Continuous start");
-    co2_solenoid.start_continuous().await;
+    co2_solenoid.start_continuous();
 
     match co2_solenoid.state() {
         Co2State::Continuous => info!("Continuous: Active"),
@@ -44,7 +44,7 @@ async fn main(_spawner: Spawner) {
 
     Timer::after_secs(5).await;
 
-    co2_solenoid.stop_continuous().await;
+    co2_solenoid.stop_continuous();
     Timer::after_secs(5).await;
 
     match co2_solenoid.state() {
