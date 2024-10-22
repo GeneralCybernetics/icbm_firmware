@@ -25,6 +25,7 @@ impl<'d> Co2Solenoid<'d> {
     }
 
     //executes a single burst
+    //call repeatedly in an async loop with co2 sensor readings
     pub async fn execute_burst(&mut self, interval: u64) {
         match self.state {
             Co2State::Idle => {}
@@ -42,12 +43,12 @@ impl<'d> Co2Solenoid<'d> {
         Timer::after_millis(interval).await;
     }
 
-    pub async fn start_continuous(&mut self) {
+    pub fn start_continuous(&mut self) {
         self.state = Co2State::Continuous;
         self.output.set_high();
     }
 
-    pub async fn stop_continuous(&mut self) {
+    pub fn stop_continuous(&mut self) {
         if matches!(self.state, Co2State::Continuous) {
             self.output.set_low();
             self.state = Co2State::Idle;
