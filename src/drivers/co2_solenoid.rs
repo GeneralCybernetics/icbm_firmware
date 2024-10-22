@@ -24,8 +24,20 @@ impl<'d> Co2Solenoid<'d> {
         Co2Solenoid { output, state }
     }
 
-    //executes a single burst
     //call repeatedly in an async loop with co2 sensor readings
+    //burst_duration in ms
+    pub async fn regulate_co2(&mut self, current_co2: i32, setpoint: i32, burst_duration: u64) {
+        if current_co2 < setpoint {
+            self.execute_burst(burst_duration).await;
+        } else {
+            match self.state {
+                Co2State::Idle => {}
+                _ => self.stop_continuous(),
+            }
+        }
+    }
+
+    //executes a single burst
     pub async fn execute_burst(&mut self, interval: u64) {
         match self.state {
             Co2State::Idle => {}
