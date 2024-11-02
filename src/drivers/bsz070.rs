@@ -1,81 +1,40 @@
-use defmt::error;
-use embassy_stm32::time::Hertz;
-use embassy_stm32::timer::low_level::CountingMode;
-use embassy_stm32::timer::simple_pwm::{Ch1, PwmPin, SimplePwm};
-use embassy_stm32::timer::{Channel, GeneralInstance4Channel};
+use embassy_stm32::gpio::{Level, Output, Pin, Speed};
 use embassy_stm32::Peripheral;
 use embassy_time::Timer;
 
+#[derive(Debug)]
 pub enum HeaterState {
     Off,
     Heating,
 }
 
-pub struct Heater<'d, T: GeneralInstance4Channel> {
-    pwm: SimplePwm<'d, T>,
+pub struct Heater<'d> {
+    pin: Output<'d>,
     state: HeaterState,
 }
 
-impl<'d, T: GeneralInstance4Channel> Heater<'d, T> {
-    pub fn new(
-        tim: impl Peripheral<P = T> + 'd,
-        pwm_pin: Option<PwmPin<'d, T, Ch1>>,
-        freq: Hertz,
-    ) -> Self {
-        let mut pwm = SimplePwm::new(
-            tim,
-            pwm_pin,
-            None,
-            None,
-            None,
-            freq,
-            CountingMode::EdgeAlignedUp,
-        );
-
-        pwm.enable(Channel::Ch1);
-        pwm.set_duty(Channel::Ch1, 0);
-
-        Heater {
-            pwm,
+impl<'d> Heater<'d> {
+    pub fn new(pin: impl Peripheral<P = impl Pin> + 'd, level: Level, speed: Speed) -> Self {
+        Self {
+            pin: Output::new(pin, level, speed),
             state: HeaterState::Off,
         }
     }
 
-    //call repeatedly in an async loop with temperature sensor readings
-    pub async fn regulate_temp(
-        &mut self,
-        current_temp: f32,
-        setpoint: f32,
-        duty_cycle: u8,
-        interval_secs: u64,
-    ) {
-        if current_temp < setpoint {
-            self.heat(duty_cycle);
-            Timer::after_secs(interval_secs).await;
-            self.stop();
-        } else {
-            self.stop();
-        }
-    }
+    pub async fn heat(&mut self) {
+        const PERIOD_MS: u64 = 10_000; // 0.1Hz
+        const ON_TIME: u64 = PERIOD_MS / 10; // 10% duty cycle
+        const OFF_TIME: u64 = PERIOD_MS - ON_TIME;
 
-    // Set PWM duty cycle (0-100%)
-    pub fn heat(&mut self, duty_cycle: u8) {
-        if duty_cycle > 100 {
-            error!("ERR: duty_cycle > 100");
-            return;
-        }
-
-        let duty = (self.pwm.get_max_duty() * duty_cycle as u32) / 100;
-        self.pwm.set_duty(Channel::Ch1, duty);
-        self.state = if duty_cycle == 0 {
-            HeaterState::Off
-        } else {
-            HeaterState::Heating
-        };
+        self.state = HeaterState::Heating;
+        self.pin.set_high();
+        Timer::after_millis(ON_TIME).await;
+        self.pin.set_low();
+        Timer::after_millis(OFF_TIME).await;
     }
 
     pub fn stop(&mut self) {
-        self.pwm.set_duty(Channel::Ch1, 0);
+        self.pin.set_low();
         self.state = HeaterState::Off;
     }
 
