@@ -12,7 +12,7 @@ use {defmt_rtt as _, panic_probe as _};
 async fn main(_spawner: Spawner) {
     let p = embassy_stm32::init(Default::default());
 
-    let mut co2_solenoid = Co2Solenoid::new(p.PB1, Level::Low, Speed::High);
+    let mut co2_solenoid = Co2Solenoid::new(p.PA0, Level::Low, Speed::High);
 
     Timer::after_secs(10).await;
 

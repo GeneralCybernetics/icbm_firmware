@@ -21,16 +21,14 @@ impl<'d> Heater<'d> {
         }
     }
 
+    // call repeatedly in an async loop with SCD41 readings
+    // recommended measure time 60 secs - to allow heat to diffuse
     pub async fn heat(&mut self) {
-        const PERIOD_MS: u64 = 10_000; // 0.1Hz
-        const ON_TIME: u64 = PERIOD_MS / 10; // 10% duty cycle
-        const OFF_TIME: u64 = PERIOD_MS - ON_TIME;
-
+        const INTERVAL_MS: u64 = 1000;
         self.state = HeaterState::Heating;
         self.pin.set_high();
-        Timer::after_millis(ON_TIME).await;
+        Timer::after_millis(INTERVAL_MS).await;
         self.pin.set_low();
-        Timer::after_millis(OFF_TIME).await;
     }
 
     pub fn stop(&mut self) {
