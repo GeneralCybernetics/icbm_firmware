@@ -32,6 +32,7 @@ const CMD_GET_DATA_READY_STATUS: [u8; 2] = [0xE4, 0xB8];
 // Advanced Features
 const CMD_GET_SERIAL_NUMBER: [u8; 2] = [0x36, 0x82];
 const CMD_PERFORM_SELF_TEST: [u8; 2] = [0x36, 0x39];
+const CMD_PERSIST_SETTINGS: [u8; 2] = [0x36, 0x15];
 
 // Execution times (in milliseconds)
 const POWERUP_TIME: u64 = 30;
@@ -45,6 +46,7 @@ const EXECUTION_TIME_GET_AMBIENT_PRESSURE: u64 = 1;
 const EXECUTION_TIME_GET_DATA_READY_STATUS: u64 = 1;
 const DATA_READY_LOOP_DELAY: u64 = 3000;
 const EXECUTION_TIME_GET_SERIAL_NUMBER: u64 = 1;
+const PERSIST_SETTINGS_TIME: u64 = 800;
 
 //Attempts counts
 const DATA_READ_MAX_ATTEMPTS: u8 = 5;
@@ -125,7 +127,7 @@ impl<'d> SCD41<'d> {
                     Err(e) => error!("Failed to set internal sensor settings: {}", e),
                 }
             }
-            Some(SensorSettings::Default) | None => {
+            Some(SensorSettings::Default) => {
                 let current_offset = match self.get_temp_offset().await {
                     Ok(offset) => offset,
                     Err(e) => {
@@ -134,11 +136,12 @@ impl<'d> SCD41<'d> {
                     }
                 };
 
-                match self.set_internals(4.0, current_offset, 101_300, 0).await {
+                match self.set_internals(4.0, current_offset, 102_133, 142).await {
                     Ok(_) => info!("Default sensor settings successfully applied"),
                     Err(e) => error!("Failed to set default sensor settings: {}", e),
                 }
             }
+            None => info!("No sensor settings provided, skipping internal configuration"),
         }
 
         if let Err(e) = self.start_periodic_measurement().await {
@@ -284,7 +287,10 @@ impl<'d> SCD41<'d> {
         let actual_offset = current_temp - reference_temp + previous_offset;
 
         if actual_offset < 0.0 || actual_offset > 20.0 {
-            error!("Calculated temperature offset outside of recommended range: 0 °C and 20 °C");
+            error!(
+                "Calculated temperature offset outside of recommended range: 0 °C and 20 °C: {}",
+                actual_offset
+            );
         }
 
         // word[0] = Toffset[°C] * (2^16 - 1) / 175
@@ -337,6 +343,13 @@ impl<'d> SCD41<'d> {
             Ok(()) => Ok(buf),
             Err(e) => Err(e),
         }
+    }
+
+    pub async fn persist(&mut self) -> Result<(), &'static str> {
+        self.ensure_idle().await?;
+        self.send_command(&CMD_PERSIST_SETTINGS).await?;
+        Timer::after_millis(PERSIST_SETTINGS_TIME).await;
+        Ok(())
     }
 
     async fn set_internals(
