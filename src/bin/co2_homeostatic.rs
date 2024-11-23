@@ -30,8 +30,7 @@ async fn main(_spawner: Spawner) {
     config.stop_bits = StopBits::STOP1;
     config.data_bits = DataBits::DataBits8;
 
-    let mut usart =
-        Uart::new(p.USART3, p.PD9, p.PD8, Irqs, p.DMA1_CH3, p.DMA1_CH1, config).unwrap();
+    let usart = Uart::new(p.USART3, p.PD9, p.PD8, Irqs, p.DMA1_CH3, p.DMA1_CH1, config).unwrap();
 
     Timer::after_secs(2).await;
     let mut co2_solenoid = Co2Solenoid::new(p.PA0, Level::Low, Speed::High);

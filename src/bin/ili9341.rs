@@ -6,6 +6,7 @@ use display_interface_spi::SPIInterface;
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDeviceWithConfig;
 use embassy_executor::Spawner;
 use embassy_stm32::gpio::{Level, Output, Speed};
+use embassy_stm32::mode::Blocking;
 use embassy_stm32::spi::{self, Spi};
 use embassy_stm32::time::hz;
 use embassy_sync::blocking_mutex::{raw::NoopRawMutex, Mutex};
@@ -31,11 +32,12 @@ async fn main(_spawner: Spawner) {
     let lcd_dc = p.PC14;
     let lcd_reset = p.PC15;
     let mut lcd_spi_config = spi::Config::default();
-    lcd_spi_config.frequency = hz(8_000_000); // 26MHz
+    lcd_spi_config.frequency = hz(8_000_000); // 8MHz
     let spi = Spi::new_blocking(p.SPI3, clk, mosi, miso, lcd_spi_config.clone());
 
     // Create shared SPI bus
-    let spi_bus: Mutex<NoopRawMutex, _> = Mutex::new(RefCell::new(spi));
+    let spi_bus: Mutex<NoopRawMutex, RefCell<Spi<'static, Blocking>>> =
+        Mutex::new(RefCell::new(spi));
 
     // Create SPI device for LCD
     let lcd_spi = SpiDeviceWithConfig::new(

@@ -1,4 +1,3 @@
-use defmt::error;
 use embassy_stm32::time::Hertz;
 use embassy_stm32::timer::low_level::CountingMode;
 use embassy_stm32::timer::simple_pwm::{Ch2, Ch3, PwmPin, SimplePwm};
