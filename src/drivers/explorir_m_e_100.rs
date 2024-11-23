@@ -1,46 +1,93 @@
+use defmt::{error, info};
 use embassy_stm32::mode::Async;
 use embassy_stm32::usart::{Error, Uart};
+use embassy_time::Timer;
 use heapless::String;
+use libm::pow;
 
+// Timing Constants
+const TIME_TO_FIRST_VAL: u64 = 1200; //ms
+
+// Scaling Constants
 const CO2_SCALE_VALUE: i32 = 100;
+
+// UART Commands
+const CMD_SLEEP: &[u8] = b"K 0\r\n";
+const CMD_STREAMING: &[u8] = b"K 1\r\n";
+const CMD_POLLING: &[u8] = b"K 2\r\n";
+const CMD_GET_FILTERED_CO2: &[u8] = b"Z\r\n";
+const CMD_GET_UNFILTERED_CO2: &[u8] = b"z\r\n";
+const CMD_GET_PRESSURE_COMP: &[u8] = b"s\r\n";
+// Development-only command constant - remove the underscore prefix
+// when implementing digital filter status checks in a future update
+const _CMD_GET_DIGITAL_FILTER: &[u8] = b"a\r\n";
+const CMD_SET_DIGITAL_FILTER_32: &[u8] = b"A 32\r\n";
+const CMD_GET_SERIAL: &[u8] = b"Y\r\n";
+
+// Response Buffer Sizes
+const RESPONSE_BUFFER_SIZE: usize = 10;
+const SERIAL_BUFFER_SIZE: usize = 47;
+
+// Pressure Compensation Limits
+const MIN_PRESSURE_MBAR: f32 = 300.0;
+const MAX_PRESSURE_MBAR: f32 = 1100.0;
+const SEA_LEVEL_PRESSURE: f32 = 1013.0;
+
+//verified
+#[derive(Debug)]
+pub enum ResponseError {
+    TooShort,
+    InvalidFormat,
+    MissingSpace,
+    InvalidTermination,
+    WrongCommand,
+    Utf8Error,
+    StringOverflow,
+}
+
 pub enum Mode {
     Sleep,
     Streaming,
     Polling,
 }
 
-//these values can be expanded significantly later (ex: LED Signal) but are unnecessay at the moment
-pub enum OutputValues {
-    FilteredCO2,
-    UnfilteredCO2,
-    Both,
-}
-
 pub struct ExplorIrME100<'d> {
     uart: Uart<'d, Async>,
     mode: Mode,
-    output_value: OutputValues,
 }
 
 impl<'d> ExplorIrME100<'d> {
     pub fn new(uart: Uart<'d, Async>) -> Self {
-        let mut uninit = ExplorIrME100 {
+        ExplorIrME100 {
             uart: uart,
             mode: Mode::Polling,
-            output_value: OutputValues::FilteredCO2,
-        };
+        }
+    }
 
-        let _ = uninit.change_mode(Mode::Polling);
-        let _ = uninit.change_output(OutputValues::FilteredCO2);
-        let init = uninit;
-        init
+    pub async fn init(&mut self) -> Result<(), &'static str> {
+        self.change_mode(Mode::Polling).await.map_err(|e| {
+            error!("Failed to set polling mode: {}", e);
+            "Failed to initialize sensor in polling mode"
+        })?;
+        info!("Successfully set sensor to polling mode");
+
+        self.uart
+            .write(CMD_SET_DIGITAL_FILTER_32)
+            .await
+            .map_err(|_| "Failed to write digital filter command to UART")?;
+        info!("Set Digital Filter command sent");
+
+        Timer::after_millis(TIME_TO_FIRST_VAL).await;
+
+        info!("Sensor initialization completed successfully");
+        Ok(())
     }
 
     pub async fn change_mode(&mut self, mode: Mode) -> Result<(), Error> {
         let cmd = match mode {
-            Mode::Sleep => b"K 0\r\n",
-            Mode::Streaming => b"K 1\r\n",
-            Mode::Polling => b"K 2\r\n",
+            Mode::Sleep => CMD_SLEEP,
+            Mode::Streaming => CMD_STREAMING,
+            Mode::Polling => CMD_POLLING,
         };
 
         match self.uart.write(cmd).await {
@@ -52,127 +99,95 @@ impl<'d> ExplorIrME100<'d> {
         }
     }
 
-    pub async fn change_output(&mut self, output_value: OutputValues) -> Result<(), Error> {
-        let cmd = match output_value {
-            OutputValues::UnfilteredCO2 => b"M 2\r\n",
-            OutputValues::FilteredCO2 => b"M 4\r\n",
-            OutputValues::Both => b"M 6\r\n",
-        };
-
-        match self.uart.write(cmd).await {
-            Ok(_) => {
-                self.output_value = output_value;
-                Ok(())
-            }
-            Err(e) => Err(e),
-        }
-    }
-
     //returns the value in ppm as i32
     pub async fn get_filtered_co2(&mut self) -> Result<i32, &'static str> {
-        let cmd = b"Z\r\n";
+        self.uart
+            .write(CMD_GET_FILTERED_CO2)
+            .await
+            .map_err(|_| "Failed to write to UART")?;
 
-        match self.uart.write(cmd).await {
-            Ok(_) => {}
-            Err(_) => return Err("Failed to write to UART"),
-        }
+        let mut response = [0u8; RESPONSE_BUFFER_SIZE];
+        self.uart
+            .read(&mut response)
+            .await
+            .map_err(|_| "Failed to read from UART")?;
 
-        let mut response = [0u8; 10];
+        let result = self
+            .parse_response::<10>(&response, 'Z')
+            .map_err(Self::map_response_error)?;
 
-        match self.uart.read(&mut response).await {
-            Ok(_) => {}
-            Err(_) => return Err("Failed to read from UART"),
-        }
+        let value = result
+            .trim()
+            .parse::<i32>()
+            .map_err(|_| "Failed to parse CO2 reading as integer")?;
 
-        let co2_reading = match core::str::from_utf8(&response[3..=7]) {
-            Ok(co2_str) => co2_str,
-            Err(_) => return Err("Failed to parse response as UTF-8"),
-        };
-
-        match co2_reading.parse::<i32>() {
-            Ok(num) => Ok(num * CO2_SCALE_VALUE),
-            Err(_) => Err("Failed to parse CO2 reading as integer"),
-        }
+        Ok(value * CO2_SCALE_VALUE)
     }
 
     //returns the value in ppm as i32
     pub async fn get_unfiltered_co2(&mut self) -> Result<i32, &'static str> {
-        let cmd = b"z\r\n";
+        self.uart
+            .write(CMD_GET_UNFILTERED_CO2)
+            .await
+            .map_err(|_| "Failed to write to UART")?;
 
-        match self.uart.write(cmd).await {
-            Ok(_) => {}
-            Err(_) => return Err("Failed to write to UART"),
-        }
+        let mut response = [0u8; RESPONSE_BUFFER_SIZE];
+        self.uart
+            .read(&mut response)
+            .await
+            .map_err(|_| "Failed to read from UART")?;
 
-        let mut response = [0u8; 10];
+        let result = self
+            .parse_response::<10>(&response, 'z')
+            .map_err(Self::map_response_error)?;
 
-        match self.uart.read(&mut response).await {
-            Ok(_) => {}
-            Err(_) => return Err("Failed to read from UART"),
-        }
+        let value = result
+            .trim()
+            .parse::<i32>()
+            .map_err(|_| "Failed to parse CO2 reading as integer")?;
 
-        let co2_reading = match core::str::from_utf8(&response[3..=7]) {
-            Ok(co2_str) => co2_str,
-            Err(_) => return Err("Failed to parse response as UTF-8"),
-        };
-
-        match co2_reading.parse::<i32>() {
-            Ok(num) => Ok(num * CO2_SCALE_VALUE),
-            Err(_) => Err("Failed to parse CO2 reading as integer"),
-        }
+        Ok(value * CO2_SCALE_VALUE)
     }
 
     //reports in compensation value
     pub async fn get_pressure_and_concentration(&mut self) -> Result<i32, &'static str> {
-        let cmd = b"s\r\n";
+        self.uart
+            .write(CMD_GET_PRESSURE_COMP)
+            .await
+            .map_err(|_| "Failed to write to UART")?;
 
-        match self.uart.write(cmd).await {
-            Ok(_) => {}
-            Err(_) => return Err("Failed to write to UART"),
-        }
+        let mut response = [0u8; RESPONSE_BUFFER_SIZE];
+        self.uart
+            .read(&mut response)
+            .await
+            .map_err(|_| "Failed to read from UART")?;
 
-        let mut response = [0u8; 10];
+        let result = self
+            .parse_response::<10>(&response, 's')
+            .map_err(Self::map_response_error)?;
 
-        match self.uart.read(&mut response).await {
-            Ok(_) => {}
-            Err(_) => return Err("Failed to read from UART"),
-        }
-
-        // info!("{:#x}", &response);
-
-        if let Some(end_pos) = response.iter().position(|&x| x == 0x0D) {
-            let co2_reading = match core::str::from_utf8(&response[3..end_pos]) {
-                Ok(s) => s,
-                Err(_) => return Err("Failed to parse response as UTF-8"),
-            };
-
-            match co2_reading.parse::<i32>() {
-                Ok(num) => Ok(num),
-                Err(_) => Err("Failed to parse Pressure & Concentration reading as integer"),
-            }
-        } else {
-            Err("0x0D not found in response")
-        }
+        result
+            .trim()
+            .parse::<i32>()
+            .map_err(|_| "Failed to parse pressure reading as integer")
     }
 
-    //altitude must be in meter
+    //Input: millibars (mBar), range 300-1100
     pub async fn set_pressure_and_concentration(
         &mut self,
-        altitude: f32,
+        pressure_mbar: f32,
     ) -> Result<(), &'static str> {
-        if altitude < 0.0 || altitude > 3050.0 {
-            return Err("altitude out of range");
+        if pressure_mbar < MIN_PRESSURE_MBAR || pressure_mbar > MAX_PRESSURE_MBAR {
+            return Err("pressure out of range (300-1100 mbar)");
         }
 
-        //the following quadratic curve fits the comp val best
-        let compensation_value = ((-0.000043713 * altitude as f64 * altitude as f64)
-            + (1.2813 * altitude as f64)
-            + 8229.2) as i32;
+        let sea_level_difference = pressure_mbar - SEA_LEVEL_PRESSURE;
+        let compensation_value = (8192.0 + (sea_level_difference * 0.14 / 100.0) * 8192.0) as i32;
 
         let mut buffer = itoa::Buffer::new();
         let num_str = buffer.format(compensation_value);
-        // info!("{:?}", compensation_value);
 
+        // Construct the command string "S <value>\r\n"
         let mut cmd = [0u8; 9];
         let mut index = 0;
         index += b"S ".len();
@@ -187,6 +202,7 @@ impl<'d> ExplorIrME100<'d> {
             .map_err(|_| "Failed to write to UART")
     }
 
+    //input the value in ppm
     pub async fn calibrate(&mut self, ppm: u32) -> Result<(), &'static str> {
         let scaled_val = ppm / CO2_SCALE_VALUE as u32;
         let mut buffer = itoa::Buffer::new();
@@ -243,58 +259,78 @@ impl<'d> ExplorIrME100<'d> {
         Ok(())
     }
 
-    pub async fn read_serial_no(&mut self) -> Result<String<47>, &'static str> {
-        let cmd = b"Y\r\n";
+    pub async fn read_serial_no(&mut self) -> Result<String<SERIAL_BUFFER_SIZE>, &'static str> {
         self.uart
-            .write(cmd)
+            .write(CMD_GET_SERIAL)
             .await
             .map_err(|_| "Failed to write command")?;
 
-        let mut buf = [0u8; 47];
-
+        let mut response = [0u8; SERIAL_BUFFER_SIZE];
         self.uart
-            .read(&mut buf)
+            .read(&mut response)
             .await
-            .map_err(|_| "Failed to read response")?;
+            .map_err(|_| "Failed to read from UART")?;
 
-        let mut result: String<47> = String::new();
+        self.parse_response::<SERIAL_BUFFER_SIZE>(&response, 'Y')
+            .map_err(Self::map_response_error)
+    }
 
-        if let Ok(parsed_str) = core::str::from_utf8(&buf[0..45]) {
-            result.push_str(parsed_str).map_err(|_| "String overflow")?;
-            Ok(result)
-        } else {
-            Err("Invalid UTF-8 sequence")
+    fn parse_response<const N: usize>(
+        &self,
+        resp: &[u8],
+        check_letter: char,
+    ) -> Result<String<N>, ResponseError> {
+        const ASCII_SPACE: u8 = 0x20;
+        const CR: u8 = 0x0D;
+        const LF: u8 = 0x0A;
+
+        if resp.len() < 4 {
+            return Err(ResponseError::TooShort);
+        }
+
+        if resp[0] != ASCII_SPACE {
+            return Err(ResponseError::MissingSpace);
+        }
+
+        if resp[1] != check_letter as u8 {
+            return Err(ResponseError::WrongCommand);
+        }
+
+        let end_idx = resp.len() - 2;
+        if resp[end_idx] != CR || resp[end_idx + 1] != LF {
+            return Err(ResponseError::InvalidTermination);
+        }
+
+        let mut result = String::<N>::new();
+        match core::str::from_utf8(&resp[2..end_idx]) {
+            Ok(parsed_str) => match result.push_str(parsed_str) {
+                Ok(_) => Ok(result),
+                Err(_) => Err(ResponseError::StringOverflow),
+            },
+            Err(_) => Err(ResponseError::Utf8Error),
         }
     }
 
-    //LATER: global response checker
+    fn map_response_error(e: ResponseError) -> &'static str {
+        match e {
+            ResponseError::TooShort => "Response too short",
+            ResponseError::MissingSpace => "Missing leading space",
+            ResponseError::WrongCommand => "Wrong command letter in response",
+            ResponseError::InvalidTermination => "Invalid termination sequence",
+            ResponseError::Utf8Error => "Invalid UTF-8 in response",
+            ResponseError::StringOverflow => "Response string overflow",
+            ResponseError::InvalidFormat => "Invalid response format",
+        }
+    }
 
-    // fn parse_response(&self, resp: &[u8], check_letter: char) -> Result<String<47>, &'static str> {
-    //     const ASCII_SPACE: u8 = 0x20;
-    //     const CR: u8 = 0x0D;
-    //     const LF: u8 = 0x0A;
-    //     let char_ascii = check_letter as u8;
-    //     let arr_len = resp.len();
-
-    //     if arr_len < 4 {
-    //         return Err("Response too short");
-    //     }
-
-    //     if resp[0] == ASCII_SPACE
-    //         && resp[arr_len - 2] == CR
-    //         && resp[arr_len - 1] == LF
-    //         && resp[1] == char_ascii
-    //     {
-    //         // Use heapless String to store the response
-    //         let mut result: String<47> = String::new();
-    //         if let Ok(parsed_str) = core::str::from_utf8(&resp[..arr_len - 2]) {
-    //             result.push_str(parsed_str).map_err(|_| "String overflow")?;
-    //             Ok(result)
-    //         } else {
-    //             Err("Invalid UTF-8 sequence")
-    //         }
-    //     } else {
-    //         Err("Error parsing response")
-    //     }
-    // }
+    // Verified function; currently unused - remove #[allow(dead_code)]
+    // when this is integrated into the CO2 compensation calculations
+    #[allow(dead_code)]
+    fn calculate_y(c1: f64) -> f64 {
+        2.811e-38 * pow(c1, 6.0) - 9.817e-32 * pow(c1, 5.0) + 1.304e-25 * pow(c1, 4.0)
+            - 8.126e-20 * pow(c1, 3.0)
+            + 2.311e-14 * pow(c1, 2.0)
+            - 2.195e-9 * c1
+            - 1.471e-3
+    }
 }
