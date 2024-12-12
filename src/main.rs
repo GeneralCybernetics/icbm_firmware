@@ -56,6 +56,7 @@ async fn main(_spawner: Spawner) {
     let mut co2_valve = Co2Solenoid::new(p.PA0, Level::Low, Speed::VeryHigh);
     let mut heater = Heater::new(p.PA1, Level::Low, Speed::VeryHigh);
     heater.stop();
+    co2_valve.stop_continuous();
 
     let mut uart_config = UartConfig::default();
     uart_config.baudrate = 9600;
@@ -170,18 +171,23 @@ async fn main(_spawner: Spawner) {
         Err(e) => error!("CO2 sensor initialization failed: {}", e),
     }
 
+    let mut co2_str: String<32> = String::new();
+    let mut temp_str: String<32> = String::new();
+    let mut co2_buf = itoa::Buffer::new();
+    let mut temp_buf = itoa::Buffer::new();
+    let mut fract_buf = itoa::Buffer::new();
+
     loop {
         Timer::after_secs(30).await;
 
-        // Clear the measurement display area
+        co2_str.clear();
+        temp_str.clear();
+
         lcd.fill_solid(
             &Rectangle::new(Point::new(0, 80), Size::new(320, 100)),
             Rgb565::BLACK,
         )
         .unwrap();
-
-        let mut co2_str: String<32> = String::new();
-        let mut temp_str: String<32> = String::new();
 
         Text::with_alignment(
             "ION CONCENTRATION BIO-MODULATOR",
@@ -230,13 +236,15 @@ async fn main(_spawner: Spawner) {
             }
         };
 
+        Timer::after_secs(1).await;
         let temp_error = TARGET_TEMP_C - current_temp;
         if temp_error > TEMP_TOLERANCE_C {
             info!("Activating heater: temp diff {}", temp_error);
-            heater.heat().await;
+            heater.heat().await; //3000ms heat cycle
         } else {
             heater.stop();
         }
+        Timer::after_secs(2).await;
 
         let co2_error = TARGET_CO2_PPM - current_co2;
         if co2_error > CO2_TOLERANCE_PPM {
@@ -244,17 +252,14 @@ async fn main(_spawner: Spawner) {
             co2_valve.execute_burst(1000).await;
         }
 
-        let mut co2_buf = itoa::Buffer::new();
         let co2_num = co2_buf.format(current_co2 as i32);
         co2_str.push_str("CO2: ").unwrap();
         co2_str.push_str(co2_num).unwrap();
         co2_str.push_str(" PPM").unwrap();
 
-        let mut temp_buf = itoa::Buffer::new();
         let temp_whole = temp_buf.format(current_temp as i32);
         let temp_fract = ((libm::fmodf(current_temp, 1.0) * 10.0) as i32).abs();
-        let mut temp_fract_buf = itoa::Buffer::new();
-        let temp_fract_str = temp_fract_buf.format(temp_fract);
+        let temp_fract_str = fract_buf.format(temp_fract);
         temp_str.push_str("TEMP: ").unwrap();
         temp_str.push_str(temp_whole).unwrap();
         temp_str.push_str(".").unwrap();
