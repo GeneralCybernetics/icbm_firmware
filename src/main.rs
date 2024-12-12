@@ -13,6 +13,7 @@ use embassy_stm32::{
     spi::{self, Spi},
     time::{hz, Hertz},
     usart::{Config as UartConfig, DataBits, Parity, StopBits, Uart},
+    wdg::IndependentWatchdog,
     {bind_interrupts, peripherals, usart},
 };
 use embassy_sync::blocking_mutex::{raw::NoopRawMutex, Mutex};
@@ -57,6 +58,9 @@ async fn main(_spawner: Spawner) {
     let mut heater = Heater::new(p.PA1, Level::Low, Speed::VeryHigh);
     heater.stop();
     co2_valve.stop_continuous();
+
+    let mut watchdog = IndependentWatchdog::new(p.IWDG, 30_000_000); // 10 second timeout in microseconds
+    watchdog.unleash(); //start the watchdog
 
     let mut uart_config = UartConfig::default();
     uart_config.baudrate = 9600;
@@ -125,6 +129,7 @@ async fn main(_spawner: Spawner) {
 
     lcd.clear(Rgb565::BLACK).unwrap();
     let style = MonoTextStyle::new(&FONT_10X20, Rgb565::GREEN);
+    watchdog.pet();
 
     Text::with_alignment(
         "ION CONCENTRATION BIO-MODULATOR",
@@ -154,6 +159,7 @@ async fn main(_spawner: Spawner) {
     .unwrap();
 
     Timer::after_secs(2).await;
+    watchdog.pet();
 
     info!("Starting SCD41 initialization");
     let mut scd41sensor = SCD41::new(i2c);
@@ -162,6 +168,7 @@ async fn main(_spawner: Spawner) {
         Err(e) => error!("SCD41 initialization error: {}", e),
     }
 
+    watchdog.pet();
     Timer::after_secs(2).await;
 
     info!("Starting ExplorIR-M-E-100 CO2 sensor initialization");
@@ -176,9 +183,11 @@ async fn main(_spawner: Spawner) {
     let mut co2_buf = itoa::Buffer::new();
     let mut temp_buf = itoa::Buffer::new();
     let mut fract_buf = itoa::Buffer::new();
+    watchdog.pet();
 
     loop {
-        Timer::after_secs(30).await;
+        Timer::after_secs(25).await;
+        watchdog.pet();
 
         co2_str.clear();
         temp_str.clear();
@@ -216,6 +225,7 @@ async fn main(_spawner: Spawner) {
                 continue;
             }
         };
+        watchdog.pet();
 
         let current_co2 = match co2_sensor.get_filtered_co2().await {
             Ok(ppm) => {
@@ -236,6 +246,7 @@ async fn main(_spawner: Spawner) {
             }
         };
 
+        watchdog.pet();
         Timer::after_secs(1).await;
         let temp_error = TARGET_TEMP_C - current_temp;
         if temp_error > TEMP_TOLERANCE_C {
@@ -246,10 +257,11 @@ async fn main(_spawner: Spawner) {
         }
         Timer::after_secs(2).await;
 
+        watchdog.pet();
         let co2_error = TARGET_CO2_PPM - current_co2;
         if co2_error > CO2_TOLERANCE_PPM {
             info!("Activating CO2: diff {}", co2_error);
-            co2_valve.execute_burst(1000).await;
+            co2_valve.execute_burst(500).await;
         }
 
         let co2_num = co2_buf.format(current_co2 as i32);
@@ -265,6 +277,7 @@ async fn main(_spawner: Spawner) {
         temp_str.push_str(".").unwrap();
         temp_str.push_str(temp_fract_str).unwrap();
         temp_str.push_str(" C").unwrap();
+        watchdog.pet();
 
         Text::with_alignment(&co2_str, Point::new(320 / 2, 100), style, Alignment::Center)
             .draw(&mut lcd)
@@ -311,5 +324,6 @@ async fn main(_spawner: Spawner) {
         .unwrap();
 
         info!("Loop iteration complete");
+        watchdog.pet();
     }
 }
