@@ -24,7 +24,7 @@ impl<'d> Heater<'d> {
     // call repeatedly in an async loop with SCD41 readings
     // recommended measure time 60 secs - to allow heat to diffuse
     pub async fn heat(&mut self) {
-        const INTERVAL_MS: u64 = 3000;
+        const INTERVAL_MS: u64 = 5000;
         self.state = HeaterState::Heating;
         self.pin.set_high();
         Timer::after_millis(INTERVAL_MS).await;

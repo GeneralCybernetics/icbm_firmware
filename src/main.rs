@@ -59,7 +59,7 @@ async fn main(_spawner: Spawner) {
     heater.stop();
     co2_valve.stop_continuous();
 
-    let mut watchdog = IndependentWatchdog::new(p.IWDG, 30_000_000); // 10 second timeout in microseconds
+    let mut watchdog = IndependentWatchdog::new(p.IWDG, 30_000_000); // 30 second timeout in microseconds
     watchdog.unleash(); //start the watchdog
 
     let mut uart_config = UartConfig::default();
@@ -186,6 +186,8 @@ async fn main(_spawner: Spawner) {
     watchdog.pet();
 
     loop {
+        Timer::after_secs(25).await;
+        watchdog.pet();
         Timer::after_secs(25).await;
         watchdog.pet();
 
